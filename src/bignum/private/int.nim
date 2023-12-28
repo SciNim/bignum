@@ -1,4 +1,7 @@
-type Int* = ref mpz_t
+type MPZ = object
+  data*: ref mpz_t
+  readonly*: bool
+type Int* = ref MPZ
   ## An Int represents a signed multi-precision integer.
 
 const LLP64_ULONG_MAX = 0xFFFFFFFF
@@ -24,18 +27,20 @@ proc validBase(base: cint) =
   if base < -36 or (base > -2 and base < 2) or base > 62:
     raise newException(ValueError, "Invalid base")
 
-proc finalizeInt(z: Int) =
-  # Finalizer - release the memory allocated to the mpz.
-  mpz_clear(z[])
+proc `=destroy`(z: var MPZ) =
+  if not z.readonly:
+    mpz_clear(z.data[])
 
 proc newInt*(x: culong): Int =
   ## Allocates and returns a new Int set to `x`.
-  new(result, finalizeInt)
-  mpz_init_set_ui(result[], x)
+  new(result)
+  new(result[].data)
+  mpz_init_set_ui(result[].data[], x)
 
 proc newInt*(x: int = 0): Int =
   ## Allocates and returns a new Int set to `x`.
-  new(result, finalizeInt)
+  new(result)
+  new(result[].data)
   when isLLP64():
     if x.fitsLLP64Long:
       mpz_init_set_si(result[], x.clong)
@@ -49,13 +54,14 @@ proc newInt*(x: int = 0): Int =
       else:
         result[].mp_d[] = x.mp_limb_t
   else:
-    mpz_init_set_si(result[], x.clong)
+    mpz_init_set_si(result[].data[], x.clong)
 
 proc newInt*(s: string, base: cint = 10): Int =
   ## Allocates and returns a new Int set to `s`, interpreted in the given `base`.
   validBase(base)
-  new(result, finalizeInt)
-  if mpz_init_set_str(result[], s, base) == -1:
+  new(result)
+  new(result[].data)
+  if mpz_init_set_str(result[].data[], s, base) == -1:
     raise newException(ValueError, "String not in correct base")
 
 proc clear*(z: Int) =
@@ -63,63 +69,64 @@ proc clear*(z: Int) =
   ##
   ## This normally happens on a finalizer call, but if you want immediate
   ## deallocation you can call it.
-  GCunref(z)
-  finalizeInt(z)
+  GCunref(z.data)
+  `=destroy`(z[])
 
 proc clone*(z: Int): Int =
   ## Returns a clone of `z`.
-  new(result, finalizeInt)
-  mpz_init_set(result[], z[])
+  new(result)
+  new(result[].data)
+  mpz_init_set(result[].data[], z[].data[])
 
 proc digits*(z: Int, base: range[(2.cint) .. (62.cint)] = 10): csize =
   ## Returns the size of `z` measured in number of digits in the given `base`.
   ## The sign of `z` is ignored, just the absolute value is used.
-  mpz_sizeinbase(z[], base)
+  mpz_sizeinbase(z[].data[], base)
 
 proc `$`*(z: Int, base: cint = 10): string =
   ## The stringify operator for an Int argument. Returns `z` converted to a
   ## string in the given `base`.
   validBase(base)
   result = newString(digits(z, base) + 2)
-  result.setLen(mpz_get_str(result, base, z[]).len)
+  result.setLen(mpz_get_str(result, base, z[].data[]).len)
 
 proc set*(z, x: Int): Int =
   ## Sets `z` to `x` and returns `z`.
   result = z
-  mpz_set(result[], x[])
+  mpz_set(result[].data[], x[].data[])
 
 proc set*(z: Int, x: culong): Int =
   ## Sets `z` to `x` and returns `z`.
   result = z
-  mpz_set_ui(result[], x)
+  mpz_set_ui(result[].data[], x)
 
 proc set*(z: Int, x: int): Int =
   ## Sets `z` to `x` and returns `z`.
   result = z
   when isLLP64():
     if x.fitsLLP64Long:
-      mpz_set_si(result[], x.clong)
+      mpz_set_si(result[].data[], x.clong)
     elif x.fitsLLP64ULong:
-      mpz_set_ui(result[], x.culong)
+      mpz_set_ui(result[].data[], x.culong)
     else:
-      if x < 0: result[].mp_size = -1 else: result[].mp_size = 1
+      if x < 0: result[].data[].mp_size = -1 else: result[].data[].mp_size = 1
       if x < 0 and x > low(int):
-        result[].mp_d[] = (-x).mp_limb_t
+        result[].data[].mp_d[] = (-x).mp_limb_t
       else:
-        result[].mp_d[] = x.mp_limb_t
+        result[].data[].mp_d[] = x.mp_limb_t
   else:
-    mpz_set_si(result[], x.clong)
+    mpz_set_si(result[].data[], x.clong)
 
 proc set*(z: Int, s: string, base: cint = 10): Int =
   ## Sets `z` to the value of `s`, interpreted in the given `base`, and returns `z`.
   validBase(base)
   result = z
-  if mpz_set_str(result[], s, base) == -1:
+  if mpz_set_str(result[].data[], s, base) == -1:
     raise newException(ValueError, "String not in correct base")
 
 proc swap*(x: Int, y: Int) =
   ## Swaps the values `x` and `y` efficiently.
-  mpz_swap(x[], y[])
+  mpz_swap(x[].data[], y[].data[])
 
 proc cmp*(x, y: Int): cint =
   ## Compares `x` and `y` and returns:
@@ -127,7 +134,7 @@ proc cmp*(x, y: Int): cint =
   ##   -1 if x <  y
   ##    0 if x == y
   ##   +1 if x >  y
-  result = mpz_cmp(x[], y[])
+  result = mpz_cmp(x[].data[], y[].data[])
   if result < 0:
     result = -1
   elif result > 0:
@@ -139,7 +146,7 @@ proc cmp*(x: Int, y: culong): cint =
   ##   -1 if x <  y
   ##    0 if x == y
   ##   +1 if x >  y
-  result = mpz_cmp_ui(x[], y)
+  result = mpz_cmp_ui(x[].data[], y)
   if result < 0:
     result = -1
   elif result > 0:
@@ -153,28 +160,28 @@ proc cmp*(x: Int, y: int): cint =
   ##   +1 if x >  y
   when isLLP64():
     if y.fitsLLP64Long:
-      result = mpz_cmp_si(x[], y.clong)
+      result = mpz_cmp_si(x[].data[], y.clong)
     elif y.fitsLLP64ULong:
       return x.cmp(y.culong)
     else:
       var size: cint
       if y < 0: size = -1 else: size = 1
-      if x[].mp_size != size:
-        if x[].mp_size != 0:
-          result = x[].mp_size
+      if x[].data[].mp_size != size:
+        if x[].data[].mp_size != 0:
+          result = x[].data[].mp_size
         else:
           if size == -1: result = 1 else: result = -1
       else:
         var op1, op2: mp_limb_t
         if size == -1 and y > low(int):
           op1 = (-y).mp_limb_t
-          op2 = x[].mp_d[]
+          op2 = x[].data[].mp_d[]
         else:
           if y == low(int):
             op1 = y.mp_limb_t
-            op2 = x[].mp_d[]
+            op2 = x[].data[].mp_d[]
           else:
-            op1 = x[].mp_d[]
+            op1 = x[].data[].mp_d[]
             op2 = y.mp_limb_t
 
         if op1 == op2:
@@ -184,7 +191,7 @@ proc cmp*(x: Int, y: int): cint =
         else:
           result = -1
   else:
-    result = mpz_cmp_si(x[], y.clong)
+    result = mpz_cmp_si(x[].data[], y.clong)
 
   if result < 0:
     result = -1
@@ -223,7 +230,7 @@ proc sign*(x: Int): cint =
   ##   -1 if x <  0
   ##    0 if x == 0
   ##   +1 if x >  0
-  mpz_sgn(x[])
+  mpz_sgn(x[].data[])
 
 proc positive*(x: Int): bool =
   ## Returns whether `x` is positive or zero.
@@ -240,7 +247,7 @@ proc isZero*(x: Int): bool =
 proc abs*(z, x: Int): Int =
   ## Sets `z` to |x| (the absolute value of `x`) and returns `z`.
   result = z
-  mpz_abs(result[], x[])
+  mpz_abs(result[].data[], x[].data[])
 
 proc abs*(x: Int): Int =
   ## Returns the absolute value of `x`.
@@ -249,12 +256,12 @@ proc abs*(x: Int): Int =
 proc add*(z, x, y: Int): Int =
   ## Sets `z` to the sum x+y and returns `z`.
   result = z
-  mpz_add(result[], x[], y[])
+  mpz_add(result[].data[], x[].data[], y[].data[])
 
 proc add*(z, x: Int, y: culong): Int =
   ## Sets `z` to the sum x+y and returns `z`.
   result = z
-  mpz_add_ui(result[], x[], y)
+  mpz_add_ui(result[].data[], x[].data[], y)
 
 proc add*(z, x: Int, y: int): Int =
   ## Sets `z` to the sum x+y and returns `z`.
@@ -274,17 +281,17 @@ proc `+`*(x: int | culong, y: Int): Int =
 proc sub*(z, x, y: Int): Int =
   ## Sets `z` to the difference x-y and returns `z`.
   result = z
-  mpz_sub(result[], x[], y[])
+  mpz_sub(result[].data[], x[].data[], y[].data[])
 
 proc sub*(z, x: Int, y: culong): Int =
   ## Sets `z` to the difference x-y and returns `z`.
   result = z
-  mpz_sub_ui(result[], x[], y)
+  mpz_sub_ui(result[].data[], x[].data[], y)
 
 proc sub*(z: Int, x: culong, y: Int): Int =
   ## Sets `z` to the difference x-y and returns `z`.
   result = z
-  mpz_ui_sub(result[], x, y[])
+  mpz_ui_sub(result[].data[], x, y[].data[])
 
 proc sub*(z, x: Int, y: int): Int =
   ## Sets `z` to the difference x-y and returns `z`.
@@ -311,12 +318,12 @@ proc `-`*(x: int | culong, y: Int): Int =
 proc addMul*(z, x, y: Int): Int =
   ## Increments `z` by `x` times `y`.
   result = z
-  mpz_addmul(result[], x[], y[])
+  mpz_addmul(result[].data[], x[].data[], y[].data[])
 
 proc addMul*(z, x: Int, y: culong): Int =
   ## Increments `z` by `x` times `y`.
   result = z
-  mpz_addmul_ui(result[], x[], y)
+  mpz_addmul_ui(result[].data[], x[].data[], y)
 
 proc addMul*(z, x: Int, y: int): Int =
   ## Increments `z` by `x` times `y`.
@@ -336,12 +343,12 @@ proc addMul*(z: Int, x: int | culong, y: int | culong): Int =
 proc subMul*(z, x, y: Int): Int =
   ## Decrements `z` by `x` times `y`.
   result = z
-  mpz_submul(result[], x[], y[])
+  mpz_submul(result[].data[], x[].data[], y[].data[])
 
 proc subMul*(z, x: Int, y: culong): Int =
   ## Decrements `z` by `x` times `y`.
   result = z
-  mpz_submul_ui(result[], x[], y)
+  mpz_submul_ui(result[].data[], x[].data[], y)
 
 proc subMul*(z, x: Int, y: int): Int =
   ## Decrements `z` by `x` times `y`.
@@ -377,25 +384,25 @@ proc `-=`*(z: Int, x: int | culong | Int) =
 proc mul*(z, x, y: Int): Int =
   ## Sets `z` to the product x*y and returns `z`.
   result = z
-  mpz_mul(result[], x[], y[])
+  mpz_mul(result[].data[], x[].data[], y[].data[])
 
 proc mul*(z, x: Int, y: culong): Int =
   ## Sets `z` to the product x*y and returns `z`.
   result = z
-  mpz_mul_ui(result[], x[], y)
+  mpz_mul_ui(result[].data[], x[].data[], y)
 
 proc mul*(z, x: Int, y: int): Int =
   ## Sets `z` to the product x*y and returns `z`.
   result = z
   when isLLP64():
     if y.fitsLLP64Long:
-      mpz_mul_si(result[], x[], y.clong)
+      mpz_mul_si(result[].data[], x[].data[], y.clong)
     elif y.fitsLLP64ULong:
-      mpz_mul_ui(result[], x[], y.culong)
+      mpz_mul_ui(result[].data[], x[].data[], y.culong)
     else:
-      mpz_mul(result[], x[], newInt(y)[])
+      mpz_mul(result[].data[], x[].data[], newInt(y)[])
   else:
-    mpz_mul_si(result[], x[], y.clong)
+    mpz_mul_si(result[].data[], x[].data[], y.clong)
 
 proc `*`*(x: Int, y: int | culong | Int): Int =
   ## Returns the product x*y.
@@ -449,7 +456,7 @@ iterator `..`*(a: int | culong, b: Int): Int {.inline.} =
 proc `and`*(z, x, y: Int): Int =
   ## Sets `z` = `x` bitwise-and `y` and returns `z`.
   result = z
-  mpz_and(z[], x[], y[])
+  mpz_and(z[].data[], x[].data[], y[].data[])
 
 proc `and`*(x, y: Int): Int =
   ## Returns `x` bitwise-and `y`.
@@ -466,7 +473,7 @@ proc `and`*(x: int | culong, y: Int): Int =
 proc `or`*(z, x, y: Int): Int =
   ## Sets `z` = `x` bitwise inclusive-or `y` and returns `z`.
   result = z
-  mpz_ior(z[], x[], y[])
+  mpz_ior(z[].data[], x[].data[], y[].data[])
 
 proc `or`*(x, y: Int): Int =
   ## Returns `x` bitwise inclusive-or `y`.
@@ -483,7 +490,7 @@ proc `or`*(x: int | culong, y: Int): Int =
 proc `xor`*(z, x, y: Int): Int =
   ## Sets `z` = `x` bitwise exclusive-or `y` and returns `z`.
   result = z
-  mpz_xor(z[], x[], y[])
+  mpz_xor(z[].data[], x[].data[], y[].data[])
 
 proc `xor`*(x, y: Int): Int =
   ## Returns `x` bitwise exclusive-or `y`.
@@ -500,35 +507,35 @@ proc `xor`*(x: int | culong, y: Int): Int =
 proc `not`*(z, x: Int): Int =
   ## Sets `z` to the one's complement of `x` and returns `z`.
   result = z
-  mpz_com(z[], x[])
+  mpz_com(z[].data[], x[].data[])
 
 proc `not`*(x: Int): Int =
   ## Returns the one's complement of `x`.
   let
     zero = newInt()
-  mpz_com(zero[], x[])
+  mpz_com(zero[].data[], x[].data[])
 
 proc odd*(z: Int): bool =
   ## Returns whether `z` is odd.
-  mpz_odd_p(z[]) != 0
+  mpz_odd_p(z[].data[]) != 0
 
 proc even*(z: Int): bool =
   ## Returns whether `z` is even.
-  mpz_even_p(z[]) != 0
+  mpz_even_p(z[].data[]) != 0
 
 proc `div`*(z, x, y: Int): Int =
   ## Sets `z` to the quotient x/y for `y` != 0 and returns `z`.
   ## `div` implements truncated division towards zero.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  mpz_tdiv_q(result[], x[], y[])
+  mpz_tdiv_q(result[].data[], x[].data[], y[].data[])
 
 proc `div`*(z, x: Int, y: culong): Int =
   ## Sets `z` to the quotient x/y for `y` != 0 and returns `z`.
   ## `div` implements truncated division towards zero.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  discard mpz_tdiv_q_ui(result[], x[], y)
+  discard mpz_tdiv_q_ui(result[].data[], x[].data[], y)
 
 proc `div`*(z, x: Int, y: int): Int =
   ## Sets `z` to the quotient x/y for `y` != 0 and returns `z`.
@@ -553,14 +560,14 @@ proc `mod`*(z, x, y: Int): Int =
   ## `mod` implements truncated division towards zero.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  mpz_tdiv_r(result[], x[], y[])
+  mpz_tdiv_r(result[].data[], x[].data[], y[].data[])
 
 proc `mod`*(z, x: Int, y: culong): Int =
   ## Sets `z` to the remainder x/y for `y` != 0 and returns `z`.
   ## `mod` implements truncated division towards zero.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  discard mpz_tdiv_r_ui(result[], x[], y)
+  discard mpz_tdiv_r_ui(result[].data[], x[].data[], y)
 
 proc `mod`*(z, x: Int, y: int): Int =
   ## Sets `z` to the remainder x/y for `y` != 0 and returns `z`.
@@ -586,7 +593,7 @@ proc modInverse*(z, g, n: Int): bool =
   ## 0 < `z` < abs(`n`). If an inverse doesn't exist the return value is `false`
   ## and `z` is undefined. The behaviour of this proc is undefined when `n` is
   ## zero.
-  mpz_invert(z[], g[], n[]) != 0
+  mpz_invert(z[].data[], g[].data[], n[].data[]) != 0
 
 proc modInverse*(g: Int, n: Int): Int =
   ## Computes the inverse of `g` modulo `n`. If an inverse doesn't exist the
@@ -613,7 +620,7 @@ proc divMod*(q, r, x, y: Int): tuple[q, r: Int] =
   ## `divMod` implements truncated division towards zero.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = (q: q, r: r)
-  mpz_tdiv_qr(q[], r[], x[], y[])
+  mpz_tdiv_qr(q[].data[], r[].data[], x[].data[], y[].data[])
 
 proc divMod*(q, r, x: Int, y: culong): tuple[q, r: Int] =
   ## Sets `q` to the quotient and `r` to the remainder resulting from x/y for
@@ -621,7 +628,7 @@ proc divMod*(q, r, x: Int, y: culong): tuple[q, r: Int] =
   ## `divMod` implements truncated division towards zero.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = (q: q, r: r)
-  discard mpz_tdiv_qr_ui(q[], r[], x[], y)
+  discard mpz_tdiv_qr_ui(q[].data[], r[].data[], x[].data[], y)
 
 proc divMod*(q, r, x: Int, y: int): tuple[q, r: Int] =
   ## Sets `q` to the quotient and `r` to the remainder resulting from x/y for
@@ -650,7 +657,7 @@ proc fdiv*(z, x, y: Int): Int =
   ## The f stands for “floor”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  mpz_fdiv_q(result[], x[], y[])
+  mpz_fdiv_q(result[].data[], x[].data[], y[].data[])
 
 proc fdiv*(z, x: Int, y: culong): Int =
   ## Sets `z` to the quotient x/y for `y` != 0 and returns `z`.
@@ -658,7 +665,7 @@ proc fdiv*(z, x: Int, y: culong): Int =
   ## The f stands for “floor”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  discard mpz_fdiv_q_ui(result[], x[], y)
+  discard mpz_fdiv_q_ui(result[].data[], x[].data[], y)
 
 proc fdiv*(z, x: Int, y: int): Int =
   ## Sets `z` to the quotient x/y for `y` != 0 and returns `z`.
@@ -697,7 +704,7 @@ proc fmod*(z, x, y: Int): Int =
   ## The f stands for “floor”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  mpz_fdiv_r(result[], x[], y[])
+  mpz_fdiv_r(result[].data[], x[].data[], y[].data[])
 
 proc fmod*(z, x: Int, y: culong): Int =
   ## Sets `z` to the remainder x/y for `y` != 0 and returns `z`.
@@ -705,7 +712,7 @@ proc fmod*(z, x: Int, y: culong): Int =
   ## The f stands for “floor”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  discard mpz_fdiv_r_ui(result[], x[], y)
+  discard mpz_fdiv_r_ui(result[].data[], x[].data[], y)
 
 proc fmod*(z, x: Int, y: int): Int =
   ## Sets `z` to the remainder x/y for `y` != 0 and returns `z`.
@@ -745,7 +752,7 @@ proc fdivMod*(q, r, x, y: Int): tuple[q, r: Int] =
   ## The f stands for “floor”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = (q: q, r: r)
-  mpz_fdiv_qr(q[], r[], x[], y[])
+  mpz_fdiv_qr(q[].data[], r[].data[], x[].data[], y[].data[])
 
 proc fdivMod*(q, r, x: Int, y: culong): tuple[q, r: Int] =
   ## Sets `q` to the quotient and `r` to the remainder resulting from x/y for
@@ -754,7 +761,7 @@ proc fdivMod*(q, r, x: Int, y: culong): tuple[q, r: Int] =
   ## The f stands for “floor”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = (q: q, r: r)
-  discard mpz_fdiv_qr_ui(q[], r[], x[], y)
+  discard mpz_fdiv_qr_ui(q[].data[], r[].data[], x[].data[], y)
 
 proc fdivMod*(q, r, x: Int, y: int): tuple[q, r: Int] =
   ## Sets `q` to the quotient and `r` to the remainder resulting from x/y for
@@ -786,7 +793,7 @@ proc cdiv*(z, x, y: Int): Int =
   ## The c stands for “ceil”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  mpz_cdiv_q(result[], x[], y[])
+  mpz_cdiv_q(result[].data[], x[].data[], y[].data[])
 
 proc cdiv*(z, x: Int, y: culong): Int =
   ## Sets `z` to the quotient x/y for `y` != 0 and returns `z`.
@@ -794,7 +801,7 @@ proc cdiv*(z, x: Int, y: culong): Int =
   ## The c stands for “ceil”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  discard mpz_cdiv_q_ui(result[], x[], y)
+  discard mpz_cdiv_q_ui(result[].data[], x[].data[], y)
 
 proc cdiv*(z, x: Int, y: int): Int =
   ## Sets `z` to the quotient x/y for `y` != 0 and returns `z`.
@@ -823,7 +830,7 @@ proc cmod*(z, x, y: Int): Int =
   ## The c stands for “ceil”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  mpz_cdiv_r(result[], x[], y[])
+  mpz_cdiv_r(result[].data[], x[].data[], y[].data[])
 
 proc cmod*(z, x: Int, y: culong): Int =
   ## Sets `z` to the remainder x/y for `y` != 0 and returns `z`.
@@ -831,7 +838,7 @@ proc cmod*(z, x: Int, y: culong): Int =
   ## The c stands for “ceil”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  discard mpz_cdiv_r_ui(result[], x[], y)
+  discard mpz_cdiv_r_ui(result[].data[], x[].data[], y)
 
 proc cmod*(z, x: Int, y: int): Int =
   ## Sets `z` to the remainder x/y for `y` != 0 and returns `z`.
@@ -861,7 +868,7 @@ proc cdivMod*(q, r, x, y: Int): tuple[q, r: Int] =
   ## The c stands for “ceil”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = (q: q, r: r)
-  mpz_cdiv_qr(q[], r[], x[], y[])
+  mpz_cdiv_qr(q[].data[], r[].data[], x[].data[], y[].data[])
 
 proc cdivMod*(q, r, x: Int, y: culong): tuple[q, r: Int] =
   ## Sets `q` to the quotient and `r` to the remainder resulting from x/y for
@@ -870,7 +877,7 @@ proc cdivMod*(q, r, x: Int, y: culong): tuple[q, r: Int] =
   ## The c stands for “ceil”.
   if y == 0: raise newException(DivByZeroError, "Division by zero")
   result = (q: q, r: r)
-  discard mpz_cdiv_qr_ui(q[], r[], x[], y)
+  discard mpz_cdiv_qr_ui(q[].data[], r[].data[], x[].data[], y)
 
 proc cdivMod*(q, r, x: Int, y: int): tuple[q, r: Int] =
   ## Sets `q` to the quotient and `r` to the remainder resulting from x/y for
@@ -921,7 +928,7 @@ proc fac*(z, x: Int): Int =
 proc fac*(z: Int, x: culong): Int =
   ## Sets `z` to the factorial of `x` and returns `z`.
   result = z
-  mpz_fac_ui(result[], x)
+  mpz_fac_ui(result[].data[], x)
 
 proc fac*(z: Int, x: int): Int =
   ## Sets `z` to the factorial of `x` and returns `z`.
@@ -976,12 +983,12 @@ proc mulRange*(a: int | culong | Int, b: int | culong | Int): Int =
 proc binom*(z, n: Int, k: culong): Int =
   ## Sets `z` to the binomial coefficient of (`n`, `k`) and returns `z`.
   result = z
-  mpz_bin_ui(z[], n[], k)
+  mpz_bin_ui(z[].data[], n[].data[], k)
 
 proc binom*(z: Int, n, k: culong): Int =
   ## Sets `z` to the binomial coefficient of (`n`, `k`) and returns `z`.
   result = z
-  mpz_bin_uiui(z[], n, k)
+  mpz_bin_uiui(z[].data[], n, k)
 
 proc binom*(n, k: Int): Int =
   ## Returns the binomial coefficient of (`n`, `k`).
@@ -1011,22 +1018,22 @@ proc binom*(n: Int, k: int): Int =
 
 proc bit*(x: Int, i: culong): cint =
   ## Returns the value of the `i`'th bit of `x`.
-  mpz_tstbit(x[], i)
+  mpz_tstbit(x[].data[], i)
 
 proc setBit*(z: Int, i: culong): Int =
   ## Sets the i`'th bit of `z` and returns the resulting Int.
   result = z
-  mpz_setbit(z[], i)
+  mpz_setbit(z[].data[], i)
 
 proc clearBit*(z: Int, i: culong): Int =
   ## Clears the i`'th bit of `z` and returns the resulting Int.
   result = z
-  mpz_clrbit(z[], i)
+  mpz_clrbit(z[].data[], i)
 
 proc complementBit*(z: Int, i: culong): Int =
   ## Complements the i`'th bit of `z` and returns the resulting Int.
   result = z
-  mpz_combit(z[], i)
+  mpz_combit(z[].data[], i)
 
 proc bitLen*(x: Int): csize =
   ## Returns the length of the absolute value of `x` in bits.
@@ -1035,12 +1042,12 @@ proc bitLen*(x: Int): csize =
 proc pow*(z, x: Int, y: culong): Int =
   ## Sets `z` to `x` raised to `y` and returns `z`. The case 0^0 yields 1.
   result = z
-  mpz_pow_ui(z[], x[], y)
+  mpz_pow_ui(z[].data[], x[].data[], y)
 
 proc pow*(z: Int, x, y: culong): Int =
   ## Sets `z` to `x` raised to `y` and returns `z`. The case 0^0 yields 1.
   result = z
-  mpz_ui_pow_ui(z[], x, y)
+  mpz_ui_pow_ui(z[].data[], x, y)
 
 proc pow*(x: culong | Int, y: culong): Int =
   ## Returns `x` raised to `y`. The case 0^0 yields 1.
@@ -1062,7 +1069,7 @@ proc exp*(z, x: Int, y: culong, m: Int): Int =
   ## If `m` == 0, z = x^y.
   if m.sign == 0: return z.pow(x, y)
   result = z
-  mpz_powm_ui(z[], x[], y, m[])
+  mpz_powm_ui(z[].data[], x[].data[], y, m[].data[])
 
 proc exp*(x: Int, y: culong, m: Int): Int =
   ## Returns (`x` raised to `y`) modulo `m`.
@@ -1082,12 +1089,12 @@ proc exp*(x: int | culong, y: culong, m: Int): Int =
 proc gcd*(z, x, y: Int): Int =
   ## Sets `z` to the greatest common divisor of `x` and `y` and returns `z`.
   result = z
-  mpz_gcd(z[], x[], y[])
+  mpz_gcd(z[].data[], x[].data[], y[].data[])
 
 proc gcd*(z, x: Int, y: culong): Int =
   ## Sets `z` to the greatest common divisor of `x` and `y` and returns `z`.
   result = z
-  discard mpz_gcd_ui(z[], x[], y)
+  discard mpz_gcd_ui(z[].data[], x[].data[], y)
 
 proc gcd*(z, x: Int, y: int): Int =
   ## Sets `z` to the greatest common divisor of `x` and `y` and returns `z`.
@@ -1107,12 +1114,12 @@ proc gcd*(x: int | culong, y: Int): Int =
 proc lcm*(z, x, y: Int): Int =
   ## Sets `z` to the least common multiple of `x` and `y` and returns `z`.
   result = z
-  mpz_lcm(z[], x[], y[])
+  mpz_lcm(z[].data[], x[].data[], y[].data[])
 
 proc lcm*(z, x: Int, y: culong): Int =
   ## Sets `z` to the least common multiple of `x` and `y` and returns `z`.
   result = z
-  mpz_lcm_ui(z[], x[], y)
+  mpz_lcm_ui(z[].data[], x[].data[], y)
 
 proc lcm*(z, x: Int, y: int): Int =
   ## Sets `z` to the least common multiple of `x` and `y` and returns `z`.
@@ -1132,7 +1139,7 @@ proc lcm*(x: int | culong, y: Int): Int =
 proc `shl`*(z, x: Int, y: culong): Int =
   ## Sets `z` the `shift left` operation of `x` and `y` and returns `z`.
   result = z
-  mpz_mul_2exp(z[], x[], y)
+  mpz_mul_2exp(z[].data[], x[].data[], y)
 
 proc `shl`*(x: Int, y: culong): Int =
   ## Computes the `shift left` operation of `x` and `y`.
@@ -1141,7 +1148,7 @@ proc `shl`*(x: Int, y: culong): Int =
 proc `shr`*(z, x: Int, y: culong): Int =
   ## Sets `z` to the `shift right` operation of `x` and `y`.
   result = z
-  mpz_fdiv_q_2exp(z[], x[], y)
+  mpz_fdiv_q_2exp(z[].data[], x[].data[], y)
 
 proc `shr`*(x: Int, y: culong): Int =
   ## Computes the `shift right` operation of `x` and `y`.
@@ -1149,11 +1156,11 @@ proc `shr`*(x: Int, y: culong): Int =
 
 proc fitsCULong*(x: Int): bool =
   ## Returns whether `x` fits in a culong.
-  mpz_fits_ulong_p(x[]) != 0
+  mpz_fits_ulong_p(x[].data[]) != 0
 
 proc fitsCLong*(x: Int): bool =
   ## Returns whether `x` fits in a clong.
-  mpz_fits_slong_p(x[]) != 0
+  mpz_fits_slong_p(x[].data[]) != 0
 
 proc fitsInt*(x: Int): bool =
   ## Returns whether `x` fits in an int.
@@ -1170,14 +1177,14 @@ proc toCULong*(x: Int): culong =
   ## If `x` is too big to fit a culong then just the least significant bits that
   ## do fit are returned. The sign of `x` is ignored, only the absolute value is
   ## used. To find out if the value will fit, use the proc `fitsCULong`.
-  mpz_get_ui(x[])
+  mpz_get_ui(x[].data[])
 
 proc toCLong*(x: Int): clong =
   ## If `x` fits into a clong returns the value of `x`. Otherwise returns the
   ## least significant part of `x`, with the same sign as `x`.
   ## If `x` is too big to fit in a clong, the returned result is probably not
   ## very useful. To find out if the value will fit, use the proc `fitsCLong`.
-  mpz_get_si(x[])
+  mpz_get_si(x[].data[])
 
 proc toInt*(x: Int): int =
   ## If `x` fits into an int returns the value of `x`. Otherwise returns the
@@ -1194,7 +1201,7 @@ proc toInt*(x: Int): int =
 proc neg*(z, x: Int): Int =
   ## Sets `z` to -`x` and returns `z`.
   result = z
-  mpz_neg(z[], x[])
+  mpz_neg(z[].data[], x[].data[])
 
 proc `-`*(x: Int): Int =
   ## Unary `-` operator for an Int. Negates `x`.
@@ -1209,7 +1216,7 @@ proc probablyPrime*(x: Int, n: cint): cint =
   ## higher value will reduce the chances of a composite being returned as
   ## "probably prime". 25 is a reasonable number; a composite number will then
   ## be identified as a prime with a probability of less than 2^(-50).
-  mpz_probab_prime_p(x[], n)
+  mpz_probab_prime_p(x[].data[], n)
 
 proc nextPrime*(z, x: Int): Int =
   ## Sets `z` to the next prime greater than `x`.
@@ -1217,7 +1224,7 @@ proc nextPrime*(z, x: Int): Int =
   ## purposes it's adequate, the chance of a composite passing will be extremely
   ## small.
   result = z
-  mpz_nextprime(z[], x[])
+  mpz_nextprime(z[].data[], x[].data[])
 
 proc nextPrime*(x: Int): Int =
   ## Returns the next prime greater than `x`.
