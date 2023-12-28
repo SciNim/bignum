@@ -1,32 +1,39 @@
 import math
 
-type Rat* = ref mpq_t
+type MPQ = object
+  data*: ref mpq_t
+type Rat* = ref MPQ
   ## A Rat represents a quotient a/b of arbitrary precision.
 
-proc finalizeRat(z: Rat) =
-  # Finalizer - release the memory allocated to the mpq.
-  mpq_clear(z[])
+proc `=destroy`(z: var MPQ) =
+  mpq_clear(z.data[])
 
 proc numRef(x: Rat): Int =
   # Returns the numerator of `x`. The result is a reference to `x`'s numerator.
-  result = cast[ref mpz_t](x[].mpq_numref)
+  new(result)
+  result[].data = cast[ref mpz_t](x[].data[].mpq_numref)
+  result[].readonly = true
 
 proc denomRef(x: Rat): Int =
   # Returns the denominator of `x`. The result is a reference to `x`'s denominator.
-  result = cast[ref mpz_t](x[].mpq_denref)
+  new(result)
+  result[].data = cast[ref mpz_t](x[].data[].mpq_denref)
+  result[].readonly = true
 
 proc newRat*(): Rat =
   ## Creates a new Rat and set it to 0/1.
-  new(result, finalizeRat)
-  mpq_init(result[])
+  new(result)
+  new(result[].data)
+  mpq_init(result[].data[])
 
 proc newRat*(f: float): Rat =
   ## Creates a new Rat and set it to the value of `f`. There is no rounding,
   ## this conversion is exact.
   if classify(f) == fcNan or f == Inf or f == NegInf:
     raise newException(ValueError, "Rat does not support NaN, Inf and NegInf")
-  new(result, finalizeRat)
-  mpq_set_d(result[], f)
+  new(result)
+  new(result[].data)
+  mpq_set_d(result[].data[], f)
 
 proc newRat*(a, b: Int): Rat =
   ## Creates a new Rat with numerator `a` and denominator `b`.
@@ -34,21 +41,21 @@ proc newRat*(a, b: Int): Rat =
   result = newRat()
   discard result.numRef.set(a)
   discard result.denomRef.set(b)
-  mpq_canonicalize(result[])
+  mpq_canonicalize(result[].data[])
 
 proc newRat*(a, b: culong): Rat =
   ## Creates a new Rat with numerator `a` and denominator `b`.
   if b == 0: raise newException(DivByZeroError, "Division by zero")
   result = newRat()
-  mpq_set_ui(result[], a, b)
-  mpq_canonicalize(result[])
+  mpq_set_ui(result[].data[], a, b)
+  mpq_canonicalize(result[].data[])
 
 proc newRat*(a: clong, b: culong): Rat =
   ## Creates a new Rat with numerator `a` and denominator `b`.
   if b == 0: raise newException(DivByZeroError, "Division by zero")
   result = newRat()
-  mpq_set_si(result[], a, b)
-  mpq_canonicalize(result[])
+  mpq_set_si(result[].data[], a, b)
+  mpq_canonicalize(result[].data[])
 
 proc newRat*(a: Int, b: int | culong): Rat =
   ## Creates a new Rat with numerator `a` and denominator `b`.
@@ -73,14 +80,14 @@ proc newRat*(s: string, base: cint = 10): Rat =
   ## Allocates and returns a new Rat set to `s`, interpreted in the given `base`.
   validBase(base)
   result = newRat()
-  if mpq_set_str(result[], s, base) == -1:
+  if mpq_set_str(result[].data[], s, base) == -1:
     raise newException(ValueError, "String not in correct base")
-  mpq_canonicalize(result[])
+  mpq_canonicalize(result[].data[])
 
 proc newRat*(x: Int): Rat =
   ## Creates a new Rat and set it to `x`/1.
   result = newRat()
-  mpq_set_z(result[], x[])
+  mpq_set_z(result[].data[], x[].data[])
 
 proc newRat*(x: culong): Rat =
   ## Creates a new Rat and set it to `x`/1.
@@ -98,54 +105,54 @@ proc clear*(z: Rat) =
   ##
   ## This normally happens on a finalizer call, but if you want immediate
   ## deallocation you can call it.
-  GCunref(z)
-  finalizeRat(z)
+  GCunref(z[].data)
+  `=destroy`(z)
 
 proc clone*(z: Rat): Rat =
   ## Returns a clone of `z`.
   result = newRat()
-  mpq_set(result[], z[])
+  mpq_set(result[].data[], z[].data[])
 
 proc `$`*(z: Rat, base: range[(2.cint) .. (36.cint)] = 10): string =
   ## The stringify operator for a Rat argument. Returns `z` converted to a
   ## string in the given `base`.
   result = newString(digits(z.numRef, base) + digits(z.denomRef, base) + 3)
-  result.setLen(mpq_get_str(result, base, z[]).len)
+  result.setLen(mpq_get_str(result, base, z[].data[]).len)
 
 proc num*(x: Rat): Int =
   ## Returns the numerator of `x`.
   result = newInt()
-  mpq_get_num(result[], x[])
+  mpq_get_num(result[].data[], x[].data[])
 
 proc denom*(x: Rat): Int =
   ## Returns the denominator of `x`.
   result = newInt()
-  mpq_get_den(result[], x[])
+  mpq_get_den(result[].data[], x[].data[])
 
 proc setNum*(z: Rat, x: int | culong | Int): Rat =
   ## Sets the numerator of `z` to `x` and returns `z`.
   result = z
   discard result.numRef.set(x)
-  mpq_canonicalize(result[])
+  mpq_canonicalize(result[].data[])
 
 proc setDenom*(z: Rat, x: int | culong | Int): Rat =
   ## Sets the denominator of `z` to `x` and returns `z`.
   if x == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
   discard result.denomRef.set(x)
-  mpq_canonicalize(result[])
+  mpq_canonicalize(result[].data[])
 
 proc set*(z: Rat, x: Rat): Rat =
   ## Sets `z` to `x` and returns `z`.
   result = z
-  mpq_set(z[], x[])
+  mpq_set(z[].data[], x[].data[])
 
 proc set*(z: Rat, x: float): Rat =
   ## Sets `z` to `x` and returns `z`.
   if classify(x) == fcNan or x == Inf or x == NegInf:
     raise newException(ValueError, "Rat does not support NaN, Inf and NegInf")
   result = z
-  mpq_set_d(z[], x)
+  mpq_set_d(z[].data[], x)
 
 proc set*(z: Rat, a, b: Int): Rat =
   ## Sets `z` to `a`/`b` and returns `z`.
@@ -153,21 +160,21 @@ proc set*(z: Rat, a, b: Int): Rat =
   result = z
   discard result.numRef.set(a)
   discard result.denomRef.set(b)
-  mpq_canonicalize(result[])
+  mpq_canonicalize(result[].data[])
 
 proc set*(z: Rat, a, b: culong): Rat =
   ## Sets `z` to `a`/`b` and returns `z`.
   if b == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  mpq_set_ui(result[], a, b)
-  mpq_canonicalize(result[])
+  mpq_set_ui(result[].data[], a, b)
+  mpq_canonicalize(result[].data[])
 
 proc set*(z: Rat, a: clong, b: culong): Rat =
   ## Sets `z` to `a`/`b` and returns `z`.
   if b == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  mpq_set_si(result[], a, b)
-  mpq_canonicalize(result[])
+  mpq_set_si(result[].data[], a, b)
+  mpq_canonicalize(result[].data[])
 
 proc set*(z: Rat, a: Int, b: int | culong): Rat =
   ## Sets `z` to `a`/`b` and returns `z`.
@@ -191,7 +198,7 @@ proc set*(z: Rat, a, b: int): Rat =
 proc set*(z: Rat, x: Int): Rat =
   ## Creates a new Rat and set it to `x`/1.
   result = z
-  mpq_set_z(result[], x[])
+  mpq_set_z(result[].data[], x[].data[])
 
 proc set*(z: Rat, x: culong): Rat =
   ## Creates a new Rat and set it to `x`/1.
@@ -206,7 +213,7 @@ proc set*(z: Rat, x: int): Rat =
 
 proc swap*(x: Rat, y: Rat) =
   ## Swaps the values `x` and `y` efficiently.
-  mpq_swap(x[], y[])
+  mpq_swap(x[].data[], y[].data[])
 
 proc cmp*(x, y: Rat): cint =
   ## Compares `x` and `y` and returns:
@@ -214,7 +221,7 @@ proc cmp*(x, y: Rat): cint =
   ##   -1 if x <  y
   ##    0 if x == y
   ##   +1 if x >  y
-  result = mpq_cmp(x[], y[])
+  result = mpq_cmp(x[].data[], y[].data[])
   if result < 0:
     result = -1
   elif result > 0:
@@ -234,7 +241,7 @@ proc cmp*(x: Rat, a, b: culong): cint =
   ##   -1 if x <  a/b
   ##    0 if x == a/b
   ##   +1 if x >  a/b
-  result = mpq_cmp_ui(x[], a, b)
+  result = mpq_cmp_ui(x[].data[], a, b)
   if result < 0:
     result = -1
   elif result > 0:
@@ -246,7 +253,7 @@ proc cmp*(x: Rat, a: clong, b: culong): cint =
   ##   -1 if x <  a/b
   ##    0 if x == a/b
   ##   +1 if x >  a/b
-  result = mpq_cmp_si(x[], a, b)
+  result = mpq_cmp_si(x[].data[], a, b)
   if result < 0:
     result = -1
   elif result > 0:
@@ -304,7 +311,7 @@ proc cmp*(x: Rat, y: int): cint =
 
 proc `==`*(x, y: Rat): bool =
   ## Returns whether `x` equals `y`.
-  mpq_equal(x[], y[]) != 0
+  mpq_equal(x[].data[], y[].data[]) != 0
 
 proc `==`*(x: Rat, y: int | culong | Int): bool =
   ## Returns whether `x` equals `y`.
@@ -338,7 +345,7 @@ proc sign*(x: Rat): cint =
   ##   -1 if x <  0
   ##    0 if x == 0
   ##   +1 if x >  0
-  mpq_sgn(x[])
+  mpq_sgn(x[].data[])
 
 proc positive*(x: Rat): bool =
   ## Returns whether `x` is positive or zero.
@@ -355,7 +362,7 @@ proc isZero*(x: Rat): bool =
 proc abs*(z, x: Rat): Rat =
   ## Sets `z` to |x| (the absolute value of `x`) and returns `z`.
   result = z
-  mpq_abs(result[], x[])
+  mpq_abs(result[].data[], x[].data[])
 
 proc abs*(x: Rat): Rat =
   ## Returns the absolute value of `x`.
@@ -364,7 +371,7 @@ proc abs*(x: Rat): Rat =
 proc add*(z, x, y: Rat): Rat =
   ## Sets `z` to the sum x+y and returns `z`.
   result = z
-  mpq_add(result[], x[], y[])
+  mpq_add(result[].data[], x[].data[], y[].data[])
 
 proc add*(z: Rat, x: Rat, y: int | culong | Int): Rat =
   ## Sets `z` to the sum x+y and returns `z`.
@@ -381,7 +388,7 @@ proc `+`*(x: int | culong | Int, y: Rat): Rat =
 proc sub*(z, x, y: Rat): Rat =
   ## Sets `z` to the difference x.y and returns `z`.
   result = z
-  mpq_sub(result[], x[], y[])
+  mpq_sub(result[].data[], x[].data[], y[].data[])
 
 proc sub*(z: Rat, x: Rat, y: int | culong | Int): Rat =
   ## Sets `z` to the difference x.y and returns `z`.
@@ -414,7 +421,7 @@ proc `-=`*(z: Rat, x: int | culong | Int | Rat) =
 proc mul*(z, x, y: Rat): Rat =
   ## Sets `z` to the product x*y and returns `z`.
   result = z
-  mpq_mul(result[], x[], y[])
+  mpq_mul(result[].data[], x[].data[], y[].data[])
 
 proc mul*(z: Rat, x: Rat, y: int | culong | Int): Rat =
   ## Sets `z` to the product x*y and returns `z`.
@@ -435,7 +442,7 @@ proc divide*(z, x, y: Rat): Rat =
   ## Sets `z` to the quotient x/y and returns `z`.
   if y.sign == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  mpq_div(z[], x[], y[])
+  mpq_div(z[].data[], x[].data[], y[].data[])
 
 proc divide*(z: Rat, x: Rat, y: int | culong | Int): Rat =
   ## Sets `z` to the quotient x/y and returns `z`.
@@ -468,7 +475,7 @@ proc inv*(z, x: Rat): Rat =
   ## Sets `z` to 1/`x` and returns `z`.
   if x.sign == 0: raise newException(DivByZeroError, "Division by zero")
   result = z
-  mpq_inv(z[], x[])
+  mpq_inv(z[].data[], x[].data[])
 
 proc reciprocal*(x: Rat): Rat =
   ## Returns 1/`x`.
@@ -476,7 +483,7 @@ proc reciprocal*(x: Rat): Rat =
 
 proc toFloat*(x: Rat): float =
   ## Returns the nearest float value for `x`.
-  mpq_get_d(x[])
+  mpq_get_d(x[].data[])
 
 proc toFloatExact*(x: Rat): tuple[r: float, e: bool] =
   ## Returns the nearest float value for `x` in `r`, and a bool in `e` indicating
@@ -497,7 +504,7 @@ proc toInt*(x: Rat): Int =
 proc neg*(z, x: Rat): Rat =
   ## Sets `z` to -`x` and returns `z`.
   result = z
-  mpq_neg(z[], x[])
+  mpq_neg(z[].data[], x[].data[])
 
 proc `-`*(x: Rat): Rat =
   ## Unary `-` operator for a Rat. Negates `x`.
